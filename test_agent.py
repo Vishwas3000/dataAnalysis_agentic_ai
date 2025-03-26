@@ -92,7 +92,7 @@ def test_llm_query():
     """Test LLM-based query generation and execution"""
     print("\n=== Testing LLM Query ===")
     query_data = {
-        "prompt": "most voted movies in US in both musical and drama categories, select only the title, year, sort in descending order by vote count",
+        "prompt": "most revenue movies in US in both musical and drama categories, select only revenuem, title, year, Genre and then sort in descending order by revenue",
         "collection": "users",  
         "max_results": 5
     }
@@ -110,7 +110,7 @@ def test_llm_query():
 
 def run_all_tests():
     """Run all tests in sequence"""
-    # test_root_endpoint()
+    test_root_endpoint()
     # test_explore_data()
     # test_mongodb_query()
     # test_vector_db_indexing()

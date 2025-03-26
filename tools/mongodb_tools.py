@@ -335,7 +335,7 @@ User Request:
 Generate a MongoDB query that will retrieve the relevant data. The query should be in JSON format with the following structure:
 {{
     "query": {{}},  // MongoDB query filter
-    "projection": {{}},  // Fields to include (1) or exclude (0). For example: {{"title": 1, "year": 1, "vote_count": 1}}
+    "projection": {{}},  // Fields to include (1) or exclude (0)
     "sort": []  // Sort criteria as [{{"field": "asc/desc"}}]
 }}
 
