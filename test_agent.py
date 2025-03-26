@@ -43,7 +43,7 @@ def test_analyze_data():
     print("\n=== Testing Data Analysis ===")
     analysis_data = {
         "query": "Show me the total profit in the North region",
-        "streaming": False
+        "streaming": True
     }
     
     start_time = time.time()
@@ -88,14 +88,35 @@ def test_vector_db_search():
     )
     print_response(response)
 
+def test_llm_query():
+    """Test LLM-based query generation and execution"""
+    print("\n=== Testing LLM Query ===")
+    query_data = {
+        "prompt": "most voted movies in US in both musical and drama categories, select only the title, year, sort in descending order by vote count",
+        "collection": "users",  
+        "max_results": 5
+    }
+    
+    start_time = time.time()
+    response = requests.post(
+        f"{BASE_URL}/llm/query",
+        json=query_data
+    )
+    end_time = time.time()
+    
+    print(f"Query completed in {end_time - start_time:.2f} seconds")
+    print("\nResults:")
+    print_response(response)
+
 def run_all_tests():
     """Run all tests in sequence"""
-    test_root_endpoint()
-    test_explore_data()
-    test_mongodb_query()
+    # test_root_endpoint()
+    # test_explore_data()
+    # test_mongodb_query()
     # test_vector_db_indexing()
     # test_vector_db_search()
-    test_analyze_data()
+    # test_analyze_data()
+    test_llm_query()
 
 if __name__ == "__main__":
     run_all_tests()

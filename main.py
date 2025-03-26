@@ -7,7 +7,7 @@ import uvicorn
 from dotenv import load_dotenv
 
 from agents.data_analysis_agent import DataAnalysisAgent
-from tools.mongodb_tools import MongoDBConnectionManager, MongoDBQueryTool
+from tools.mongodb_tools import MongoDBConnectionManager, MongoDBQueryTool, LLMQueryTool
 from tools.vectordb_tools import VectorDBManager
 
 # Load environment variables
@@ -47,6 +47,11 @@ class VectorDBSearchRequest(BaseModel):
     k: int = 5
     filter: Optional[Dict] = None
 
+class LLMQueryRequest(BaseModel):
+    prompt: str
+    collection: str
+    max_results: int = 100
+
 # Routes
 @app.get("/")
 async def root():
@@ -58,7 +63,8 @@ async def root():
             "/explore",
             "/mongodb/query",
             "/vectordb/index",
-            "/vectordb/search"
+            "/vectordb/search",
+            "/llm/query"
         ]
     }
 
@@ -129,6 +135,20 @@ async def vectordb_search(request: VectorDBSearchRequest):
             filter=request.filter
         )
         return {"results": result}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/llm/query")
+async def llm_query(request: LLMQueryRequest):
+    """Execute a natural language query using LLM."""
+    try:
+        query_tool = LLMQueryTool()
+        result = query_tool._run(
+            prompt=request.prompt,
+            collection=request.collection,
+            max_results=request.max_results
+        )
+        return json.loads(result)
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

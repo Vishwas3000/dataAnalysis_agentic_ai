@@ -193,10 +193,216 @@ class MongoDBListCollectionsTool(BaseTool):
         except Exception as e:
             return json.dumps({"error": str(e)})
 
+class LLMQuerySchema(BaseModel):
+    """Schema for LLM-based query generation tool."""
+    prompt: str = Field(..., description="Natural language prompt describing the data to query")
+    collection: str = Field(..., description="Name of the MongoDB collection to query")
+    max_results: int = Field(100, description="Maximum number of results to return")
+
+class LLMQueryTool(BaseTool):
+    """Tool for generating and executing MongoDB queries based on natural language prompts."""
+    
+    name: ClassVar[str] = "llm_query"
+    description: ClassVar[str] = """
+    Generate and execute MongoDB queries based on natural language prompts.
+    Use this tool when you need to convert user requests into database queries.
+    """
+    args_schema: ClassVar[Type[BaseModel]] = LLMQuerySchema
+    
+    def _parse_python_code_to_query(self, python_code: str) -> Dict:
+        """Parse Python code to extract MongoDB query parameters.
+        
+        Handles various MongoDB query patterns in Python code including:
+        - find() with conditions
+        - sort() with single or multiple fields
+        - limit()
+        - projection
+        - skip()
+        """
+        query_dict = {
+            "query": {},
+            "projection": None,
+            "sort": [],
+            "limit": 40  # Default to max_results if not specified
+        }
+        
+        # Extract find conditions if present
+        if "find(" in python_code:
+            find_part = python_code.split("find(")[1].split(")")[0]
+            if find_part.strip() and find_part.strip() != "{}":
+                try:
+                    # Handle both string and dict formats
+                    if find_part.startswith("{"):
+                        # Convert Python dict syntax to JSON
+                        find_part = find_part.replace("'", '"')
+                        query_dict["query"] = json.loads(find_part)
+                    else:
+                        # Handle string conditions
+                        conditions = find_part.strip("'").split(",")
+                        for condition in conditions:
+                            if "=" in condition:
+                                field, value = condition.split("=")
+                                query_dict["query"][field.strip()] = value.strip()
+                except Exception as e:
+                    print(f"Warning: Could not parse find conditions: {e}")
+        
+        # Extract projection if present
+        if "projection=" in python_code:
+            proj_part = python_code.split("projection=")[1].split(",")[0]
+            try:
+                if proj_part.startswith("{"):
+                    proj_part = proj_part.replace("'", '"')
+                    query_dict["projection"] = json.loads(proj_part)
+                else:
+                    # Handle simple field inclusion/exclusion
+                    fields = proj_part.strip("{}").split(",")
+                    query_dict["projection"] = {}
+                    for field in fields:
+                        field = field.strip()
+                        if field.startswith("-"):
+                            query_dict["projection"][field[1:]] = 0
+                        else:
+                            query_dict["projection"][field] = 1
+            except Exception as e:
+                print(f"Warning: Could not parse projection: {e}")
+        
+        # Extract sort fields and directions
+        if "sort(" in python_code:
+            sort_parts = python_code.split("sort(")[1].split(")")[0]
+            if sort_parts.startswith("[("):
+                # Handle multiple sort fields
+                sort_fields = sort_parts.strip("[]").split("),(")
+                for sort_field in sort_fields:
+                    if "," in sort_field:
+                        field, direction = sort_field.split(",")
+                        field = field.strip("'")
+                        direction = -1 if "-1" in direction else 1
+                        query_dict["sort"].append({
+                            field: "desc" if direction == -1 else "asc"
+                        })
+            else:
+                # Handle single sort field
+                field, direction = sort_parts.split(",")
+                field = field.strip("'")
+                direction = -1 if "-1" in direction else 1
+                query_dict["sort"].append({
+                    field: "desc" if direction == -1 else "asc"
+                })
+        
+        # Extract limit
+        if "limit(" in python_code:
+            try:
+                limit = int(python_code.split("limit(")[1].split(")")[0])
+                query_dict["limit"] = limit
+            except Exception as e:
+                print(f"Warning: Could not parse limit: {e}")
+        
+        # Extract skip
+        if "skip(" in python_code:
+            try:
+                skip = int(python_code.split("skip(")[1].split(")")[0])
+                query_dict["skip"] = skip
+            except Exception as e:
+                print(f"Warning: Could not parse skip: {e}")
+        
+        # Clean up empty values
+        if not query_dict["query"]:
+            query_dict["query"] = {}
+        if not query_dict["sort"]:
+            query_dict["sort"] = None
+        
+        return query_dict
+    
+    def _run(self, prompt: str, collection: str, max_results: int = 100) -> str:
+        """Generate and execute a MongoDB query based on the prompt."""
+        try:
+            # First get the schema of the collection
+            schema_tool = MongoDBSchemaInferenceTool()
+            schema_result = schema_tool._run(collection=collection)
+            schema_data = json.loads(schema_result)
+            if "error" in schema_data:
+                return json.dumps({"error": f"Failed to get schema: {schema_data['error']}"})
+            
+            # Create a prompt for the LLM to generate the query
+            query_prompt = f"""Given the following MongoDB collection schema and user request, generate a MongoDB query.
+            
+Collection Schema:
+{json.dumps(schema_data['schema'], indent=2)}
+
+User Request:
+{prompt}
+
+Generate a MongoDB query that will retrieve the relevant data. The query should be in JSON format with the following structure:
+{{
+    "query": {{}},  // MongoDB query filter
+    "projection": {{}},  // Fields to include (1) or exclude (0). For example: {{"title": 1, "year": 1, "vote_count": 1}}
+    "sort": []  // Sort criteria as [{{"field": "asc/desc"}}]
+}}
+
+IMPORTANT: Always include a projection to specify exactly which fields to return. Do not return all fields.
+Only include the JSON query, no other text."""
+
+            # Use the LLM to generate the query
+            from llm.ollama_client import get_ollama_llm
+            llm = get_ollama_llm()
+            query_json = llm.invoke(query_prompt)
+            print("Query JSON:")
+            print(query_json)
+
+            try:
+                # Try to parse as JSON first
+                try:
+                    query_dict = json.loads(query_json)
+                except json.JSONDecodeError:
+                    # If JSON parsing fails, try to parse as Python code
+                    print("Failed to parse as JSON, attempting to parse as Python code...")
+                    query_dict = self._parse_python_code_to_query(query_json)
+                
+                # Ensure projection is set correctly
+                if not query_dict.get("projection"):
+                    # Extract fields from prompt
+                    fields = []
+                    if "title" in prompt.lower():
+                        fields.append("Movie_Name")
+                    if "year" in prompt.lower():
+                        fields.append("Release_Date")
+                    if "vote" in prompt.lower():
+                        fields.append("Vote_Count")
+                    if "genre" in prompt.lower():
+                        fields.append("Genres")
+                    
+                    # Create projection
+                    if fields:
+                        query_dict["projection"] = {field: 1 for field in fields}
+                        query_dict["projection"]["_id"] = 0  # Exclude _id by default
+                
+                # Execute the query using MongoDBQueryTool
+                query_tool = MongoDBQueryTool()
+                result = query_tool._run(
+                    collection=collection,
+                    query=query_dict.get("query", {}),
+                    projection=query_dict.get("projection"),
+                    limit=max_results,
+                    sort=query_dict.get("sort")
+                )
+                
+                return result
+                
+            except Exception as e:
+                return json.dumps({
+                    "error": "Failed to generate valid query",
+                    "llm_output": query_json,
+                    "parse_error": str(e)
+                })
+            
+        except Exception as e:
+            return json.dumps({"error": str(e)})
+
 def get_mongodb_tools():
     """Get all MongoDB tools."""
     return [
         MongoDBQueryTool(),
         MongoDBSchemaInferenceTool(),
-        MongoDBListCollectionsTool()
+        MongoDBListCollectionsTool(),
+        LLMQueryTool()  # Add the new LLM query tool
     ]

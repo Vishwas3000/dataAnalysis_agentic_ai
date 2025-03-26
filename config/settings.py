@@ -6,7 +6,7 @@ load_dotenv()
 
 # MongoDB Configuration
 MONGO_URI = os.getenv("MONGO_URI", "mongodb://localhost:27017/")
-MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "data_analysis")
+MONGO_DB_NAME = os.getenv("MONGO_DB_NAME", "mydatabase")
 
 # Vector DB Configuration
 VECTORDB_DIR = os.getenv("VECTORDB_DIR", "./data/vectordb")
